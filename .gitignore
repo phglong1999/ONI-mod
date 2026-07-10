@@ -1,0 +1,11 @@
+packages
+bin
+obj
+dist
+/ModsGuide/ModTemplate/obj/Debug/*
+/ModsGuide/ModTemplate/obj/Debug/ModTemplate.csproj.FileListAbsolute.txt
+/.tgitconfig
+/ModsGuide/.vs/ModsGuide/v16/.suo
+/ModsGuide/ManualGeneratorAdvanced
+/ModsGuide/SharedLib
+*.user
