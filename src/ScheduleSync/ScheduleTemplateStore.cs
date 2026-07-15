@@ -26,7 +26,7 @@ namespace ONIUtilityTweaks.ScheduleSync
                 {
                     var template = JsonConvert.DeserializeObject<ScheduleTemplateFile>(File.ReadAllText(file.FullName));
                     Normalize(template);
-                    if (template?.Templates != null && template.Templates.Count > 0)
+                    if (template != null)
                         return template;
                 }
                 catch (Exception ex)

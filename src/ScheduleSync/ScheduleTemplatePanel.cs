@@ -449,6 +449,8 @@ namespace ONIUtilityTweaks.ScheduleSync
     {
         private const float HeaderButtonWidth = 132f;
         private const float HeaderButtonHeight = 25f;
+        private const float HeaderButtonGap = 8f;
+        private const string HeaderButtonName = "ONIUtilityTweaksTemplatesButton";
 
         public static void Postfix(ScheduleScreen __instance)
         {
@@ -487,37 +489,16 @@ namespace ONIUtilityTweaks.ScheduleSync
 
         private static void CreateButtonNextToCloseButton(RectTransform closeRect, Transform scheduleScreenTransform)
         {
-            var obj = new GameObject("ONIUtilityTweaksTemplatesButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
-            obj.transform.SetParent(closeRect.parent, false);
-            obj.transform.SetAsLastSibling();
-
-            var layout = obj.GetComponent<LayoutElement>();
-            layout.ignoreLayout = true;
-
+            GameObject obj = CreateButton(closeRect.parent, scheduleScreenTransform);
             var rect = obj.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(1f, 0.5f);
             var titleBar = FindScheduleEditorTitleBar(scheduleScreenTransform);
-            rect.sizeDelta = new Vector2(HeaderButtonWidth, HeaderButtonHeight);
-            rect.anchoredPosition = ResolveSavedButtonPosition(closeRect, scheduleScreenTransform, titleBar, 8f);
-
-            obj.GetComponent<Image>().color = ScheduleTemplatePanel.ButtonColor;
-            ScheduleTemplatePanelAccessor.CreateButtonText(
-                obj.transform,
-                "Saved",
-                ResolveScheduleEditorTitleFontSize(scheduleScreenTransform));
-
-            var button = obj.GetComponent<Button>();
-            ScheduleTemplatePanel.ConfigureButtonColors(button);
-            button.onClick.AddListener(() =>
-            {
-                if (ModSettings.Current.EnableScheduleTemplates)
-                    ScheduleTemplatePanel.Toggle(scheduleScreenTransform);
-            });
+            rect.anchoredPosition = ResolveSavedButtonPosition(closeRect, titleBar, HeaderButtonGap);
         }
 
-        private static Vector2 ResolveSavedButtonPosition(RectTransform closeRect, Transform scheduleScreenTransform, RectTransform titleBarRect, float gap)
+        private static Vector2 ResolveSavedButtonPosition(RectTransform closeRect, RectTransform titleBarRect, float gap)
         {
             var parentRect = closeRect.parent as RectTransform;
             if (parentRect == null)
@@ -550,35 +531,39 @@ namespace ONIUtilityTweaks.ScheduleSync
 
         private static void CreateHeaderButton(Transform parent)
         {
-            var obj = new GameObject("ONIUtilityTweaksTemplatesButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
-            obj.transform.SetParent(parent, false);
-            obj.transform.SetAsLastSibling();
-
-            var layout = obj.GetComponent<LayoutElement>();
-            layout.ignoreLayout = true;
-
+            GameObject obj = CreateButton(parent, parent);
             var rect = obj.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(1f, 1f);
             rect.anchorMax = new Vector2(1f, 1f);
             rect.pivot = new Vector2(1f, 0.5f);
-            rect.sizeDelta = new Vector2(HeaderButtonWidth, HeaderButtonHeight);
             rect.anchoredPosition = new Vector2(
-                ResolveLeftOfCloseButtonAnchoredX(parent, 8f),
+                ResolveLeftOfCloseButtonAnchoredX(parent, HeaderButtonGap),
                 ResolveTitleCenterAnchoredY(parent));
+        }
 
+        private static GameObject CreateButton(Transform parent, Transform scheduleScreenTransform)
+        {
+            var obj = new GameObject(HeaderButtonName, typeof(RectTransform), typeof(Image),
+                typeof(Button), typeof(LayoutElement));
+            obj.transform.SetParent(parent, false);
+            obj.transform.SetAsLastSibling();
+            obj.GetComponent<LayoutElement>().ignoreLayout = true;
+
+            obj.GetComponent<RectTransform>().sizeDelta = new Vector2(HeaderButtonWidth, HeaderButtonHeight);
             obj.GetComponent<Image>().color = ScheduleTemplatePanel.ButtonColor;
             ScheduleTemplatePanelAccessor.CreateButtonText(
                 obj.transform,
                 "Saved",
-                ResolveScheduleEditorTitleFontSize(parent));
+                ResolveScheduleEditorTitleFontSize(scheduleScreenTransform));
 
             var button = obj.GetComponent<Button>();
             ScheduleTemplatePanel.ConfigureButtonColors(button);
             button.onClick.AddListener(() =>
             {
                 if (ModSettings.Current.EnableScheduleTemplates)
-                    ScheduleTemplatePanel.Toggle(parent);
+                    ScheduleTemplatePanel.Toggle(scheduleScreenTransform);
             });
+            return obj;
         }
 
         private static float ResolveTitleCenterAnchoredY(Transform scheduleScreenTransform)
@@ -681,7 +666,7 @@ namespace ONIUtilityTweaks.ScheduleSync
         private static bool HasButton(Transform parent)
         {
             return parent.GetComponentsInChildren<Transform>(true)
-                .Any(child => child.name == "ONIUtilityTweaksTemplatesButton");
+                .Any(child => child.name == HeaderButtonName);
         }
 
         private static void RemoveButton(Transform parent)
@@ -690,7 +675,7 @@ namespace ONIUtilityTweaks.ScheduleSync
                 return;
 
             foreach (var child in parent.GetComponentsInChildren<Transform>(true)
-                .Where(transform => transform.name == "ONIUtilityTweaksTemplatesButton")
+                .Where(transform => transform.name == HeaderButtonName)
                 .ToList())
             {
                 UnityEngine.Object.Destroy(child.gameObject);

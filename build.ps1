@@ -98,6 +98,17 @@ if ($LASTEXITCODE -ne 0) {
 
 Copy-Item -Path (Join-Path $projectRoot "mod.yaml") -Destination (Join-Path $outputDir "mod.yaml") -Force
 Copy-Item -Path (Join-Path $projectRoot "mod_info.yaml") -Destination (Join-Path $outputDir "mod_info.yaml") -Force
+Copy-Item -Path (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Destination (Join-Path $outputDir "THIRD_PARTY_NOTICES.md") -Force
+
+$animationOutputDir = Join-Path $outputDir "anim"
+if (Test-Path $animationOutputDir) {
+    Remove-Item -LiteralPath $animationOutputDir -Recurse -Force
+}
+
+$animationSourceDir = Join-Path $projectRoot "assets\anim"
+if (Test-Path $animationSourceDir) {
+    Copy-Item -Path $animationSourceDir -Destination $outputDir -Recurse -Force
+}
 
 Write-Host "Built $outputPath"
 Write-Host "Copy the dist folder contents to your local ONI mod folder."
