@@ -27,10 +27,20 @@ namespace ONIUtilityTweaks.NaturalConstruction
         internal void PrepareForSimulation()
         {
             PrimaryElement element = GetComponent<PrimaryElement>();
-            if (!massScaled && element != null)
+            if (element == null)
+                return;
+
+            int cell = Grid.PosToCell(gameObject);
+            if (NaturalTileMaterialReplacement.TryTakeLegacyTerrainMass(
+                cell, out float replacementMass))
             {
-                NaturalConstructionUtility.MovePickupables(
-                    Grid.PosToCell(gameObject));
+                NaturalConstructionUtility.MovePickupables(cell);
+                element.Mass = replacementMass;
+                massScaled = true;
+            }
+            else if (!massScaled)
+            {
+                NaturalConstructionUtility.MovePickupables(cell);
                 element.Mass *= ModSettings.Current
                     .NaturalConstructionMassMultiplier;
                 massScaled = true;
@@ -47,6 +57,9 @@ namespace ONIUtilityTweaks.NaturalConstruction
                     if (!Grid.IsValidCell(cell))
                         continue;
 
+                    // This object stays on the Building layer for terrain
+                    // rendering, so preserve the engine's constructed-tile flag.
+                    Grid.Foundation[cell] = true;
                     Grid.RenderedByWorld[cell] = true;
                     if (World.Instance != null)
                     {
@@ -89,6 +102,30 @@ namespace ONIUtilityTweaks.NaturalConstruction
             tile = Grid.Objects[cell, (int)ObjectLayer.FoundationTile];
             return tile == null ? null :
                 tile.GetComponent<NaturalTileMarker>();
+        }
+
+        internal static bool IsReplaceableTerrainCell(int cell)
+        {
+            return Grid.IsValidCell(cell) && Grid.Element[cell].IsSolid &&
+                Grid.Element[cell].id != SimHashes.Unobtanium &&
+                GetNaturalTile(cell) == null;
+        }
+
+        internal static bool HasNaturalTile(
+            BuildingDef def, int cell, Orientation orientation)
+        {
+            if (def == null)
+                return false;
+
+            foreach (CellOffset offset in def.PlacementOffsets)
+            {
+                CellOffset rotated = Rotatable.GetRotatedCellOffset(
+                    offset, orientation);
+                int targetCell = Grid.OffsetCell(cell, rotated);
+                if (GetNaturalTile(targetCell) != null)
+                    return true;
+            }
+            return false;
         }
 
         internal static void MovePickupables(int cell)
@@ -193,6 +230,9 @@ namespace ONIUtilityTweaks.NaturalConstruction
         [Serialize]
         private float naturalMass = -1f;
 
+        [Serialize]
+        private bool materialReplacement;
+
         private Constructable constructable;
         private Storage storage;
         private Building building;
@@ -223,6 +263,29 @@ namespace ONIUtilityTweaks.NaturalConstruction
                 Debug.LogWarning("[ONIUtilityTweaks] Natural Construction mass " +
                     "slider was disabled because a required component is missing.");
                 return;
+            }
+
+            int cell = Grid.PosToCell(gameObject);
+            if (!constructable.IsReplacementTile &&
+                building.Def.PrefabID == NaturalTileBuildingConfig.ID &&
+                NaturalConstructionUtility.IsReplaceableTerrainCell(cell))
+                constructable.IsReplacementTile = true;
+
+            materialReplacement = constructable.IsReplacementTile &&
+                building.Def.PrefabID == NaturalTileBuildingConfig.ID;
+            if (materialReplacement)
+            {
+                NaturalTileMarker existing = NaturalConstructionUtility
+                    .GetNaturalTile(cell);
+                PrimaryElement existingElement = existing == null ? null :
+                    existing.GetComponent<PrimaryElement>();
+                float existingMass = Grid.Mass[cell];
+                if (existingMass <= 0f && existingElement != null)
+                    existingMass = existingElement.Mass;
+                if (existingMass > 0f)
+                    naturalMass = existingMass;
+                else
+                    materialReplacement = false;
             }
 
             accountedMass = building.Def.Mass[0];
@@ -324,7 +387,23 @@ namespace ONIUtilityTweaks.NaturalConstruction
             float workTime = building.Def.ConstructionTime;
             if (ModSettings.Current.ScaleNaturalConstructionTime)
                 workTime = Mathf.Clamp(naturalMass / 20f, 5f, 100f);
+            if (building.Def.PrefabID == NaturalTileBuildingConfig.ID)
+                workTime *= ModSettings.Current.NaturalTileWorkMultiplier;
             constructable.SetWorkTime(workTime);
+        }
+
+        internal static void RefreshAllWorkTimes()
+        {
+            if (Game.Instance == null)
+                return;
+
+            foreach (NaturalConstructionMassController controller in
+                UnityEngine.Object.FindObjectsByType<NaturalConstructionMassController>(
+                    FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            {
+                if (controller != null && controller.isSpawned)
+                    controller.RefreshConstructionTime();
+            }
         }
 
         public string SliderTitleKey =>
@@ -335,14 +414,19 @@ namespace ONIUtilityTweaks.NaturalConstruction
 
         public int SliderDecimalPlaces(int index) => 0;
 
-        public float GetSliderMin(int index) => 1f;
+        public float GetSliderMin(int index) =>
+            materialReplacement ? naturalMass : 1f;
 
-        public float GetSliderMax(int index) => 2000f;
+        public float GetSliderMax(int index) =>
+            materialReplacement ? naturalMass : 2000f;
 
         public float GetSliderValue(int index) => naturalMass;
 
         public void SetSliderValue(float value, int index)
         {
+            if (materialReplacement)
+                return;
+
             float clamped = Mathf.Clamp(value, GetSliderMin(index),
                 GetSliderMax(index));
             if (Mathf.Approximately(clamped, naturalMass))
@@ -356,5 +440,253 @@ namespace ONIUtilityTweaks.NaturalConstruction
 
         public string GetSliderTooltip(int index) =>
             global::STRINGS.UI.SANDBOXTOOLS.SETTINGS.MASS.TOOLTIP;
+
+        internal float NaturalMass => naturalMass;
+    }
+
+    internal static class NaturalTileMaterialReplacement
+    {
+        private static readonly FieldInfo CachedElementField =
+            AccessTools.Field(typeof(PrimaryElement), "_Element");
+        private static readonly FieldInfo SimCellOccupierCallDestroyField =
+            AccessTools.Field(typeof(SimCellOccupier), "callDestroy");
+        private static readonly FieldInfo InitialTemperatureField =
+            AccessTools.Field(typeof(Constructable), "initialTemperature");
+        private static readonly MethodInfo FinishConstructionMethod =
+            AccessTools.Method(typeof(Constructable), "FinishConstruction");
+        private static readonly System.Collections.Generic.Dictionary<int, float>
+            LegacyTerrainMass =
+                new System.Collections.Generic.Dictionary<int, float>();
+
+        internal static bool TryComplete(
+            Constructable blueprint, WorkerBase worker)
+        {
+            Building replacementBuilding = blueprint.GetComponent<Building>();
+            if (!blueprint.IsReplacementTile || replacementBuilding?.Def == null ||
+                replacementBuilding.Def.PrefabID != NaturalTileBuildingConfig.ID)
+                return false;
+
+            int cell = Grid.PosToCell(blueprint.gameObject);
+            NaturalTileMarker marker = NaturalConstructionUtility
+                .GetNaturalTile(cell);
+            Storage replacementStorage = blueprint.GetComponent<Storage>();
+            NaturalConstructionMassController massController = blueprint
+                .GetComponent<NaturalConstructionMassController>();
+            if (replacementStorage == null || massController == null)
+            {
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile material " +
+                    "replacement was missing a required component.");
+                return true;
+            }
+
+            if (marker == null)
+            {
+                GameObject candidate = replacementBuilding.Def
+                    .GetReplacementCandidate(cell);
+                if (candidate != null && candidate
+                    .GetComponent<KPrefabID>()?.HasTag(GameTags.FloorTiles) == true)
+                {
+                    return ReplaceFloorTileCandidate(
+                        blueprint, candidate, massController.NaturalMass,
+                        worker);
+                }
+
+                if (NaturalConstructionUtility.IsReplaceableTerrainCell(cell))
+                {
+                    RegisterLegacyTerrainMass(
+                        cell, massController.NaturalMass);
+                    return false;
+                }
+
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile replacement " +
+                    "could not find the existing tile or terrain cell.");
+                return true;
+            }
+
+            PrimaryElement oldPrimary = marker.GetComponent<PrimaryElement>();
+            if (oldPrimary == null)
+            {
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile material " +
+                    "replacement was missing the existing PrimaryElement.");
+                return true;
+            }
+
+            PrimaryElement suppliedMaterial = null;
+            foreach (GameObject item in replacementStorage.GetItems())
+            {
+                suppliedMaterial = item == null ? null :
+                    item.GetComponent<PrimaryElement>();
+                if (suppliedMaterial != null)
+                    break;
+            }
+            if (suppliedMaterial?.Element == null)
+            {
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile material " +
+                    "replacement had no delivered material.");
+                return true;
+            }
+
+            Element oldElement = oldPrimary.Element;
+            Element newElement = suppliedMaterial.Element;
+            float mass = massController.NaturalMass;
+            float oldTemperature = oldPrimary.Temperature;
+            byte oldDiseaseIdx = oldPrimary.DiseaseIdx;
+            int oldDiseaseCount = oldPrimary.DiseaseCount;
+            replacementStorage.ConsumeAndGetDisease(newElement.tag, mass,
+                out float consumedMass,
+                out Klei.SimUtil.DiseaseInfo diseaseInfo,
+                out float newTemperature);
+            if (consumedMass + 0.01f < mass)
+            {
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile material " +
+                    $"replacement consumed {consumedMass} kg instead of {mass} kg.");
+                return true;
+            }
+
+            if (oldElement?.substance != null)
+            {
+                oldElement.substance.SpawnResource(
+                    Grid.CellToPosCCC(cell, Grid.SceneLayer.Ore),
+                    mass, oldTemperature, oldDiseaseIdx, oldDiseaseCount);
+            }
+
+            CachedElementField?.SetValue(oldPrimary, null);
+            oldPrimary.SetElement(newElement.id);
+            oldPrimary.Mass = mass;
+            oldPrimary.Temperature = newTemperature;
+
+            Deconstructable deconstructable = marker
+                .GetComponent<Deconstructable>();
+            if (deconstructable != null)
+                deconstructable.constructionElements =
+                    new[] { newElement.tag };
+
+            SimMessages.ReplaceElement(cell, newElement.id, null, mass,
+                newTemperature, diseaseInfo.idx, diseaseInfo.count);
+            Grid.Foundation[cell] = true;
+            NaturalConstructionUtility.MovePickupables(cell);
+
+            KSelectable selectable = marker.GetComponent<KSelectable>();
+            if (selectable != null)
+                PopFXManager.Instance.SpawnFX(
+                    PopFXManager.Instance.sprite_Building,
+                    selectable.GetName(), marker.transform);
+
+            blueprint.gameObject.DeleteObject();
+            GameScheduler.Instance.ScheduleNextFrame(
+                "Refresh replaced natural tile", _ =>
+                {
+                    if (marker != null && marker.gameObject != null)
+                        marker.ShowAsNaturalTerrain();
+                });
+            return true;
+        }
+
+        private static bool ReplaceFloorTileCandidate(
+            Constructable blueprint, GameObject candidate, float mass,
+            WorkerBase worker)
+        {
+            SimCellOccupier occupier = candidate
+                .GetComponent<SimCellOccupier>();
+            if (occupier == null || SimCellOccupierCallDestroyField == null ||
+                InitialTemperatureField == null ||
+                FinishConstructionMethod == null)
+            {
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile could not " +
+                    "replace the existing floor tile without breaking its cell.");
+                return true;
+            }
+
+            Storage storage = blueprint.GetComponent<Storage>();
+            if (!TryGetConstructionTemperature(storage,
+                out float initialTemperature))
+            {
+                Debug.LogWarning("[ONIUtilityTweaks] Natural Tile floor " +
+                    "replacement had no valid delivered material temperature.");
+                return true;
+            }
+
+            int cell = Grid.PosToCell(blueprint.gameObject);
+            KAnimGraphTileVisualizer visualizer = blueprint
+                .GetComponent<KAnimGraphTileVisualizer>();
+            UtilityConnections connections = visualizer == null ?
+                (UtilityConnections)0 : visualizer.Connections;
+            RegisterLegacyTerrainMass(cell, mass);
+            InitialTemperatureField.SetValue(
+                blueprint, initialTemperature);
+            SimCellOccupierCallDestroyField.SetValue(occupier, false);
+
+            try
+            {
+                FinishConstructionMethod.Invoke(blueprint,
+                    new object[] { connections, worker });
+                candidate.DeleteObject();
+            }
+            catch (Exception ex)
+            {
+                SimCellOccupierCallDestroyField.SetValue(occupier, true);
+                LegacyTerrainMass.Remove(cell);
+                Debug.LogError("[ONIUtilityTweaks] Natural Tile floor " +
+                    "replacement failed: " + ex.GetBaseException().Message);
+            }
+            return true;
+        }
+
+        private static bool TryGetConstructionTemperature(
+            Storage storage, out float temperature)
+        {
+            float totalMass = 0f;
+            float weightedTemperature = 0f;
+            bool allLiquifiable = true;
+            if (storage != null)
+            {
+                foreach (GameObject item in storage.GetItems())
+                {
+                    PrimaryElement element = item == null ? null :
+                        item.GetComponent<PrimaryElement>();
+                    if (element == null)
+                        continue;
+
+                    totalMass += element.Mass;
+                    weightedTemperature +=
+                        element.Temperature * element.Mass;
+                    allLiquifiable &= element.HasTag(GameTags.Liquifiable);
+                }
+            }
+
+            if (totalMass <= 0f)
+            {
+                temperature = 0f;
+                return false;
+            }
+
+            float average = weightedTemperature / totalMass;
+            temperature = allLiquifiable ?
+                Mathf.Min(average, 318.15f) :
+                Mathf.Clamp(average, 0f, 318.15f);
+            return temperature > 0f && !float.IsNaN(temperature) &&
+                !float.IsInfinity(temperature);
+        }
+
+        internal static bool TryTakeLegacyTerrainMass(
+            int cell, out float mass)
+        {
+            if (LegacyTerrainMass.TryGetValue(cell, out mass))
+            {
+                LegacyTerrainMass.Remove(cell);
+                return true;
+            }
+
+            mass = 0f;
+            return false;
+        }
+
+        private static void RegisterLegacyTerrainMass(int cell, float mass)
+        {
+            LegacyTerrainMass[cell] = mass;
+            GameScheduler.Instance.ScheduleNextFrame(
+                "Expire legacy Natural Tile replacement", _ =>
+                    LegacyTerrainMass.Remove(cell));
+        }
     }
 }

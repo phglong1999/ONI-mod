@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using ONIUtilityTweaks.CarePackages;
 using ONIUtilityTweaks.Doors;
+using ONIUtilityTweaks.Food;
+using ONIUtilityTweaks.NaturalConstruction;
 using ONIUtilityTweaks.ScheduleSync;
 using PeterHan.PLib.Options;
 using UnityEngine;
@@ -15,6 +17,8 @@ namespace ONIUtilityTweaks.Settings
     {
         internal const int MinCarePackageMultiplier = 1;
         internal const int MaxCarePackageMultiplier = 100;
+        internal const int MinFoodSpoilageMultiplier = 1;
+        internal const int MaxFoodSpoilageMultiplier = 100;
 
         [JsonProperty]
         [Option("Saved Schedules", "Show the Saved button in Schedule Editor.")]
@@ -95,6 +99,15 @@ namespace ONIUtilityTweaks.Settings
         public bool EnableGasBlockingDoors { get; set; }
 
         [JsonProperty]
+        [Option("Polluted Water Spoils Food", "Treat polluted water as a contaminating environment for food.", "Food Spoilage")]
+        public bool EnablePollutedWaterFoodSpoilage { get; set; }
+
+        [JsonProperty]
+        [Option("Polluted Environment Spoilage Multiplier", "Multiply active freshness decay only in polluted oxygen or polluted water.", "Food Spoilage")]
+        [Limit(MinFoodSpoilageMultiplier, MaxFoodSpoilageMultiplier)]
+        public int FoodSpoilageMultiplier { get; set; }
+
+        [JsonProperty]
         [Option("Natural Construction", "Build natural tiles and backwalls from any solid material.", "Natural Construction")]
         [RestartRequired]
         public bool EnableNaturalConstruction { get; set; }
@@ -103,6 +116,11 @@ namespace ONIUtilityTweaks.Settings
         [Option("Scale Construction Time", "Scale construction time with the selected mass, from 5 to 100 seconds.", "Natural Construction")]
         [RestartRequired]
         public bool ScaleNaturalConstructionTime { get; set; }
+
+        [JsonProperty]
+        [Option("Natural Tile Work Multiplier", "Multiply Natural Tile construction time. Longer work grants proportionally more Construction experience.", "Natural Construction")]
+        [Limit(1f, 20f)]
+        public float NaturalTileWorkMultiplier { get; set; }
 
         [JsonProperty]
         [Option("Default Natural Tile Mass", "Default material mass for a Natural Tile. It can still be changed on each blueprint.", "Natural Construction")]
@@ -146,8 +164,11 @@ namespace ONIUtilityTweaks.Settings
             CarePackageDefaultsVersion = 0;
             EnableMaterialSeparator = false;
             EnableGasBlockingDoors = false;
+            EnablePollutedWaterFoodSpoilage = false;
+            FoodSpoilageMultiplier = 1;
             EnableNaturalConstruction = false;
             ScaleNaturalConstructionTime = true;
+            NaturalTileWorkMultiplier = 20f;
             DefaultNaturalTileMass = 100;
             DefaultNaturalBackwallMass = 100;
             NaturalConstructionMassMultiplier = 1f;
@@ -192,6 +213,9 @@ namespace ONIUtilityTweaks.Settings
         public static void ApplyChangedSettings(ModSettingsData settings)
         {
             ModSettingsData normalized = Normalize(settings);
+            bool naturalTileWorkChanged = !Mathf.Approximately(
+                Current.NaturalTileWorkMultiplier,
+                normalized.NaturalTileWorkMultiplier);
             bool gasBlockingDoorsChanged = Current.EnableGasBlockingDoors !=
                 normalized.EnableGasBlockingDoors;
             current = normalized;
@@ -202,6 +226,10 @@ namespace ONIUtilityTweaks.Settings
                 CarePackageManager.Apply(Immigration.Instance);
             if (gasBlockingDoorsChanged)
                 GasBlockingDoors.RefreshAll();
+            PollutedWaterFoodSpoilage.Apply(
+                current.EnablePollutedWaterFoodSpoilage);
+            if (naturalTileWorkChanged)
+                NaturalConstructionMassController.RefreshAllWorkTimes();
         }
 
         private static ModSettingsData LoadFromDisk()
@@ -246,10 +274,16 @@ namespace ONIUtilityTweaks.Settings
                 settings.CarePackageMultiplier,
                 ModSettingsData.MinCarePackageMultiplier,
                 ModSettingsData.MaxCarePackageMultiplier);
+            settings.FoodSpoilageMultiplier = Mathf.Clamp(
+                settings.FoodSpoilageMultiplier,
+                ModSettingsData.MinFoodSpoilageMultiplier,
+                ModSettingsData.MaxFoodSpoilageMultiplier);
             settings.DefaultNaturalTileMass = Mathf.Clamp(
                 settings.DefaultNaturalTileMass, 1, 2000);
             settings.DefaultNaturalBackwallMass = Mathf.Clamp(
                 settings.DefaultNaturalBackwallMass, 1, 2000);
+            settings.NaturalTileWorkMultiplier = Mathf.Clamp(
+                settings.NaturalTileWorkMultiplier, 1f, 20f);
             settings.NaturalConstructionMassMultiplier = Mathf.Clamp(
                 settings.NaturalConstructionMassMultiplier, 1f, 2f);
             if (settings.CarePackages == null || settings.CarePackages.Length == 0)

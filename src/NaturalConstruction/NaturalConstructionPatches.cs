@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using HarmonyLib;
 using ONIUtilityTweaks.Settings;
 using UnityEngine;
@@ -97,6 +98,110 @@ namespace ONIUtilityTweaks.NaturalConstruction
 
             controller.ClearMaterialNeeds();
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Constructable), "OnSpawn")]
+    internal static class NaturalTileLegacyTerrainPlacementPatch
+    {
+        private static void Prefix(Constructable __instance)
+        {
+            if (__instance.IsReplacementTile)
+                return;
+
+            Building building = __instance.GetComponent<Building>();
+            if (building?.Def == null ||
+                building.Def.PrefabID != NaturalTileBuildingConfig.ID)
+                return;
+
+            int cell = Grid.PosToCell(__instance.gameObject);
+            if (NaturalConstructionUtility.IsReplaceableTerrainCell(cell))
+                __instance.IsReplacementTile = true;
+        }
+    }
+
+    [HarmonyPatch(typeof(Constructable), "OnCompleteWork")]
+    internal static class NaturalTileMaterialReplacementPatch
+    {
+        private static bool Prefix(
+            Constructable __instance, WorkerBase worker)
+        {
+            return !NaturalTileMaterialReplacement.TryComplete(
+                __instance, worker);
+        }
+    }
+
+    [HarmonyPatch(typeof(Constructable), "IsCellDigRequired")]
+    internal static class NaturalTileUtilityDigPatch
+    {
+        private static void Postfix(
+            Constructable __instance, int offset_cell, ref bool __result)
+        {
+            if (!__result)
+                return;
+
+            Building building = __instance.GetComponent<Building>();
+            if (building?.Def != null && building.Def.isUtility &&
+                NaturalConstructionUtility.GetNaturalTile(offset_cell) != null)
+                __result = false;
+        }
+    }
+
+    [HarmonyPatch]
+    internal static class NaturalTileNotInTilesPlacementPatch
+    {
+        private static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(BuildingDef),
+                nameof(BuildingDef.IsValidPlaceLocation), new[]
+                {
+                    typeof(GameObject), typeof(int), typeof(Orientation),
+                    typeof(bool), typeof(string).MakeByRefType(), typeof(bool)
+                });
+        }
+
+        private static void Postfix(BuildingDef __instance, int cell,
+            Orientation orientation, ref string fail_reason,
+            ref bool __result)
+        {
+            BlockNotInTiles(__instance, cell, orientation,
+                ref fail_reason, ref __result);
+        }
+
+        internal static void BlockNotInTiles(BuildingDef def, int cell,
+            Orientation orientation, ref string failReason, ref bool result)
+        {
+            if (!result || def.BuildLocationRule != BuildLocationRule.NotInTiles ||
+                !NaturalConstructionUtility.HasNaturalTile(
+                    def, cell, orientation))
+                return;
+
+            result = false;
+            failReason = global::STRINGS.UI.TOOLTIPS
+                .HELP_BUILDLOCATION_NOT_IN_TILES;
+        }
+    }
+
+    [HarmonyPatch]
+    internal static class NaturalTileNotInTilesBuildPatch
+    {
+        private static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(BuildingDef),
+                nameof(BuildingDef.IsValidBuildLocation), new[]
+                {
+                    typeof(GameObject), typeof(int), typeof(Orientation),
+                    typeof(bool), typeof(string).MakeByRefType()
+                });
+        }
+
+        private static void Postfix(BuildingDef __instance, int cell,
+            Orientation orientation, ref string fail_reason,
+            ref bool __result)
+        {
+            NaturalTileNotInTilesPlacementPatch.BlockNotInTiles(
+                __instance, cell, orientation,
+                ref fail_reason, ref __result);
         }
     }
 

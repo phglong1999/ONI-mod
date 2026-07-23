@@ -8,6 +8,8 @@ namespace ONIUtilityTweaks.NaturalConstruction
     internal sealed class NaturalTileBuildingConfig : IBuildingConfig
     {
         internal const string ID = "OUT_NaturalTile";
+        internal static readonly Tag MaterialReplacementTag =
+            new Tag("OUT_NaturalTileMaterial");
 
         public override BuildingDef CreateBuildingDef()
         {
@@ -32,6 +34,16 @@ namespace ONIUtilityTweaks.NaturalConstruction
             // retaining IsFoundation so utilities do not request a dig chore.
             def.ObjectLayer = ObjectLayer.Building;
             def.TileLayer = ObjectLayer.NumLayers;
+            def.ReplacementCandidateLayers = new List<ObjectLayer>
+            {
+                ObjectLayer.Building,
+                ObjectLayer.FoundationTile
+            };
+            def.ReplacementTags = new List<Tag>
+            {
+                MaterialReplacementTag,
+                GameTags.FloorTiles
+            };
             def.Floodable = false;
             def.Entombable = false;
             def.Overheatable = false;
@@ -70,6 +82,7 @@ namespace ONIUtilityTweaks.NaturalConstruction
         public override void DoPostConfigureComplete(GameObject go)
         {
             GeneratedBuildings.RemoveLoopingSounds(go);
+            go.GetComponent<KPrefabID>()?.AddTag(MaterialReplacementTag);
             KBatchedAnimController controller =
                 go.GetComponent<KBatchedAnimController>();
             if (controller != null)

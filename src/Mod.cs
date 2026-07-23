@@ -2,6 +2,7 @@ using HarmonyLib;
 using KMod;
 using ONIUtilityTweaks.CarePackages;
 using ONIUtilityTweaks.Doors;
+using ONIUtilityTweaks.Food;
 using ONIUtilityTweaks.NaturalConstruction;
 using ONIUtilityTweaks.Settings;
 using PeterHan.PLib.Core;
@@ -19,8 +20,9 @@ namespace ONIUtilityTweaks
             PUtil.InitLibrary();
             Localization.RegisterForTranslation(typeof(NaturalConstruction.STRINGS));
             LocString.CreateLocStringKeys(typeof(NaturalConstruction.STRINGS), null);
-            new PPatchManager(harmony).RegisterPatchClass(
-                typeof(GasBlockingDoorPatchBootstrap));
+            var patchManager = new PPatchManager(harmony);
+            patchManager.RegisterPatchClass(typeof(GasBlockingDoorPatchBootstrap));
+            patchManager.RegisterPatchClass(typeof(PollutedWaterFoodSpoilage));
             new POptions().RegisterOptions(this, typeof(ModSettingsData));
             ModSettings.Reload();
             if (CarePackageManager.ExternalModLoaded)
